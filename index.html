@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Starbucks Maps & Stamps</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <style>
+        body {
+            margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: flex; flex-direction: column; height: 100vh; background: #f4f4f4;
+        }
+        #header {
+            background: #00704A; color: white; padding: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); z-index: 10;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        #header-left h1 { margin: 0 0 5px 0; font-size: 1.2rem; }
+        #stats { font-size: 1rem; font-weight: bold; }
+        #btn-import-open {
+            background: white; color: #00704A; border: none; padding: 6px 12px; border-radius: 20px;
+            font-size: 0.85rem; font-weight: bold; cursor: pointer; box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        
+        #filters {
+            display: flex; flex-direction: column; gap: 10px; padding: 10px 15px; background: #fff; border-bottom: 1px solid #ddd; z-index: 10;
+        }
+        .filter-row { display: flex; gap: 10px; }
+        select { flex: 1; padding: 8px; border-radius: 4px; border: 1px solid #ccc; font-size: 1rem; }
+        .checkbox-group { display: flex; gap: 15px; flex-wrap: wrap; font-size: 0.9rem; align-items: center; }
+        .checkbox-group label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+        .checkbox-group input[type="checkbox"] { width: 16px; height: 16px; accent-color: #00704A; }
+
+        #main-content { flex: 1; position: relative; overflow: hidden; }
+        #map-container { width: 100%; height: 100%; }
+        #list-container { width: 100%; height: 100%; overflow-y: auto; background: #fff; display: none; padding-bottom: 80px; }
+        
+        .store-item { padding: 15px; border-bottom: 1px solid #eee; }
+        .store-name { font-weight: bold; margin-bottom: 5px; font-size: 1.1rem; }
+        .store-address { font-size: 0.85rem; color: #666; margin-bottom: 5px;}
+        .visit-info { font-size: 0.8rem; color: #444; background: #f9f9f9; padding: 8px; border-radius: 6px; margin-top: 8px; border: 1px solid #eee; }
+        
+        .badge { padding: 4px 8px; color: white; border-radius: 4px; font-size: 0.75rem; font-weight: bold; display: inline-block; }
+        .bg-red { background: #e74c3c; } /* 未訪問 */
+        .bg-blue { background: #3498db; } /* 訪問済・営業中 */
+        .bg-black { background: #333333; } /* 訪問済・閉店 */
+        
+        #view-toggle-btn {
+            position: fixed; bottom: 25px; right: 25px; z-index: 1000;
+            padding: 12px 24px; background: #00704A; color: white;
+            border: none; border-radius: 30px; font-size: 1rem; font-weight: bold;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3); cursor: pointer; transition: 0.2s;
+        }
+        
+        /* インポートモーダル用 */
+        #import-modal {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.6); z-index: 2000; align-items: center; justify-content: center;
+        }
+        .modal-content {
+            background: #fff; padding: 20px; border-radius: 8px; width: 90%; max-width: 500px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        }
+        .modal-content h2 { margin-top: 0; font-size: 1.2rem; }
+        .modal-content textarea {
+            width: 100%; height: 200px; margin: 10px 0; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; font-family: monospace; font-size: 0.85rem;
+        }
+        .modal-actions { text-align: right; margin-top: 10px; }
+        .btn-cancel { background: #ccc; border: none; padding: 8px 16px; border-radius: 4px; margin-right: 10px; cursor: pointer; font-weight: bold; }
+        .btn-save { background: #00704A; color: white; border: none; padding: 8px 16px; border-radius: 4px; font-weight: bold; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+    <div id="header">
+        <div id="header-left">
+            <h1>マイストアスタンプ マップ</h1>
+            <div id="stats">【全国】達成率: 読込中...</div>
+        </div>
+        <button id="btn-import-open" onclick="openImportModal()">データ読込</button>
+    </div>
+
+    <div id="filters">
+        <div class="filter-row">
+            <select id="pref-select" onchange="onPrefChange()">
+                <option value="">全国（都道府県）</option>
+            </select>
+            <select id="city-select" onchange="applyFilters()">
+                <option value="">すべての市区町村</option>
+            </select>
+        </div>
+        <div class="checkbox-group">
+            <label><input type="checkbox" id="chk-unvisited" checked onchange="applyFilters()"> 未訪問</label>
+            <label><input type="checkbox" id="chk-visited-open" checked onchange="applyFilters()"> 訪問済(営)</label>
+            <label><input type="checkbox" id="chk-visited-closed" checked onchange="applyFilters()"> 訪問済(閉)</label>
+        </div>
+    </div>
+
+    <div id="main-content">
+        <div id="map-container"></div>
+        <div id="list-container"></div>
+    </div>
+
+    <button id="view-toggle-btn" onclick="toggleView()">一覧を見る</button>
+
+    <div id="import-modal">
+        <div class="modal-content">
+            <h2>スタンプデータの登録</h2>
+            <p style="font-size: 0.85rem; color: #555;">my_starbucks_stamps_all.json のテキスト内容をコピーして貼り付けてください。<br>※データはご自身のブラウザ内部（LocalStorage）にのみ安全に保存されます。</p>
+            <textarea id="json-input" placeholder="[ { &quot;store_id&quot;: &quot;1234&quot;, ... } ]"></textarea>
+            <div class="modal-actions">
+                <button class="btn-cancel" onclick="closeImportModal()">キャンセル</button>
+                <button class="btn-save" onclick="saveStampsData()">保存して反映</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <script>
+        const prefMap = {
+            1:"北海道",2:"青森県",3:"岩手県",4:"宮城県",5:"秋田県",6:"山形県",7:"福島県",8:"茨城県",9:"栃木県",10:"群馬県",
+            11:"埼玉県",12:"千葉県",13:"東京都",14:"神奈川県",15:"新潟県",16:"富山県",17:"石川県",18:"福井県",19:"山梨県",20:"長野県",
+            21:"岐阜県",22:"静岡県",23:"愛知県",24:"三重県",25:"滋賀県",26:"京都府",27:"大阪府",28:"兵庫県",29:"奈良県",30:"和歌山県",
+            31:"鳥取県",32:"島根県",33:"岡山県",34:"広島県",35:"山口県",36:"徳島県",37:"香川県",38:"愛媛県",39:"高知県",40:"福岡県",
+            41:"佐賀県",42:"長崎県",43:"熊本県",44:"大分県",45:"宮崎県",46:"鹿児島県",47:"沖縄県"
+        };
+
+        let mergedStores = [];
+        let map, markersLayer;
+        let isMapView = true;
+        const STORAGE_KEY = 'my_starbucks_stamps_data';
+
+        async function init() {
+            initMap();
+            try {
+                // 全店舗データのみFetchで取得
+                const fullRes = await fetch('./starbucks_full_data.json');
+                const allStoresData = await fullRes.json();
+                
+                // スタンプデータはLocalStorageから取得
+                const savedStampsStr = localStorage.getItem(STORAGE_KEY);
+                let stampsData = [];
+                
+                if (savedStampsStr) {
+                    try {
+                        stampsData = JSON.parse(savedStampsStr);
+                    } catch(e) {
+                        console.error("ローカルデータのパースエラー", e);
+                    }
+                } else {
+                    // データが未登録の場合はモーダルを開く
+                    openImportModal();
+                }
+                
+                processData(allStoresData, stampsData);
+                initFilters();
+                applyFilters();
+            } catch (error) {
+                console.error("データの読み込みに失敗しました", error);
+                document.getElementById('stats').innerText = "データ読込エラー。";
+            }
+        }
+
+        function processData(allStoresData, stampsData) {
+            mergedStores = []; // 初期化
+            const stampsMap = {};
+            stampsData.forEach(stamp => {
+                stampsMap[stamp.store_id] = stamp;
+            });
+
+            const fullDataMap = {};
+
+            allStoresData.forEach(item => {
+                const fields = item.fields;
+                const store_id = fields.store_id;
+                fullDataMap[store_id] = fields;
+                
+                const stamp = stampsMap[store_id];
+                const isVisited = stamp !== undefined;
+                let lat = null, lng = null;
+                
+                if (fields.location) {
+                    const parts = fields.location.split(',');
+                    lat = parseFloat(parts[0]);
+                    lng = parseFloat(parts[1]);
+                }
+
+                mergedStores.push({
+                    store_id: store_id,
+                    name: fields.name,
+                    address_1: fields.address_1,
+                    address_2: fields.address_2,
+                    address_5: fields.address_5,
+                    lat: lat,
+                    lng: lng,
+                    status: isVisited ? 'visited_open' : 'unvisited',
+                    freq: isVisited ? stamp.frequency_of_visits : null,
+                    first_visit: isVisited ? stamp.first_visit_date : null,
+                    last_visit: isVisited ? stamp.last_visit_date : null
+                });
+            });
+
+            stampsData.forEach(stamp => {
+                if (!fullDataMap[stamp.store_id]) {
+                    const prefName = prefMap[stamp.pref_code] || '不明';
+                    mergedStores.push({
+                        store_id: stamp.store_id,
+                        name: stamp.name,
+                        address_1: prefName,
+                        address_2: '不明',
+                        address_5: '※所在地詳細不明（閉店）',
+                        lat: null, 
+                        lng: null,
+                        status: stamp.is_exist === 1 ? 'visited_open' : 'visited_closed',
+                        freq: stamp.frequency_of_visits,
+                        first_visit: stamp.first_visit_date,
+                        last_visit: stamp.last_visit_date
+                    });
+                }
+            });
+        }
+
+        // モーダル操作系
+        function openImportModal() {
+            document.getElementById('import-modal').style.display = 'flex';
+            const savedStr = localStorage.getItem(STORAGE_KEY);
+            if(savedStr) document.getElementById('json-input').value = savedStr;
+        }
+
+        function closeImportModal() {
+            document.getElementById('import-modal').style.display = 'none';
+        }
+
+        function saveStampsData() {
+            const jsonText = document.getElementById('json-input').value;
+            if(!jsonText.trim()) {
+                alert("データが入力されていません。");
+                return;
+            }
+            try {
+                const parsed = JSON.parse(jsonText);
+                if(!Array.isArray(parsed)) throw new Error("配列形式ではありません");
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+                closeImportModal();
+                alert("データを保存しました。画面を再読み込みします。");
+                location.reload();
+            } catch(e) {
+                alert("JSONの形式が正しくありません。コピーしたテキストを確認してください。");
+            }
+        }
+
+        function initFilters() {
+            const prefs = [...new Set(mergedStores.map(s => s.address_1))].filter(Boolean).sort();
+            const prefSelect = document.getElementById('pref-select');
+            prefs.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p;
+                opt.textContent = p;
+                prefSelect.appendChild(opt);
+            });
+        }
+
+        function onPrefChange() {
+            const pref = document.getElementById('pref-select').value;
+            const citySelect = document.getElementById('city-select');
+            citySelect.innerHTML = '<option value="">すべての市区町村</option>';
+            
+            if (pref) {
+                const cities = [...new Set(mergedStores.filter(s => s.address_1 === pref).map(s => s.address_2))].filter(c => c && c !== '不明').sort();
+                cities.forEach(c => {
+                    const opt = document.createElement('option');
+                    opt.value = c;
+                    opt.textContent = c;
+                    citySelect.appendChild(opt);
+                });
+            }
+            applyFilters();
+        }
+
+        function applyFilters() {
+            const pref = document.getElementById('pref-select').value;
+            const city = document.getElementById('city-select').value;
+            
+            const showUnvisited = document.getElementById('chk-unvisited').checked;
+            const showVisitedOpen = document.getElementById('chk-visited-open').checked;
+            const showVisitedClosed = document.getElementById('chk-visited-closed').checked;
+            
+            let areaFiltered = mergedStores;
+            if (pref) areaFiltered = areaFiltered.filter(s => s.address_1 === pref);
+            if (city) areaFiltered = areaFiltered.filter(s => s.address_2 === city);
+
+            let finalFiltered = areaFiltered.filter(s => {
+                if (s.status === 'unvisited' && showUnvisited) return true;
+                if (s.status === 'visited_open' && showVisitedOpen) return true;
+                if (s.status === 'visited_closed' && showVisitedClosed) return true;
+                return false;
+            });
+
+            renderMap(finalFiltered);
+            renderList(finalFiltered);
+            updateStats(areaFiltered, pref, city);
+        }
+
+        function updateStats(areaStores, pref, city) {
+            let title = "全国";
+            if (city) title = city;
+            else if (pref) title = pref;
+
+            const xx = areaStores.filter(s => s.status === 'visited_open').length;
+            const yy = areaStores.filter(s => s.status === 'visited_open' || s.status === 'unvisited').length;
+            const zz = areaStores.filter(s => s.status === 'visited_closed').length;
+
+            document.getElementById('stats').innerText = `【${title}】達成率: ${xx}/${yy} (閉店 ${zz})`;
+        }
+
+        function initMap() {
+            // 初期表示位置を中心部に設定
+            map = L.map('map-container').setView([34.6937, 135.5023], 10);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors'
+            }).addTo(map);
+            markersLayer = L.layerGroup().addTo(map);
+        }
+
+        function getIcon(status) {
+            const color = status === 'unvisited' ? '#e74c3c' : 
+                          status === 'visited_open' ? '#3498db' : '#333333';
+            const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 36" width="24" height="36"><path fill="${color}" d="M12 0C5.37 0 0 5.37 0 12c0 9 12 24 12 24s12-15 12-24c0-6.63-5.37-12-12-12zm0 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10z"/></svg>`;
+            return L.icon({
+                iconUrl: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+                iconSize: [24, 36],
+                iconAnchor: [12, 36],
+                popupAnchor: [0, -36]
+            });
+        }
+
+        function renderMap(stores) {
+            markersLayer.clearLayers();
+            const bounds = [];
+            
+            stores.forEach(s => {
+                if (s.lat && s.lng) {
+                    const marker = L.marker([s.lat, s.lng], { icon: getIcon(s.status) });
+                    const statusText = s.status === 'unvisited' ? '未訪問' : s.status === 'visited_open' ? '訪問済' : '閉店';
+                    
+                    // URL生成方法を修正 (Google Maps Directions URL)
+                    const routeUrl = `https://www.google.com/maps/dir/?api=1&destination=${s.lat},${s.lng}`;
+                    
+                    marker.bindPopup(`
+                        <b style="font-size:1.1rem;">${s.name}</b><br>
+                        状態: ${statusText}<br>
+                        <a href="${routeUrl}" target="_blank" style="display:inline-block; margin-top:5px; color:#00704A; font-weight:bold;">Googleマップで経路案内</a>
+                    `);
+                    markersLayer.addLayer(marker);
+                    bounds.push([s.lat, s.lng]);
+                }
+            });
+            
+            if (bounds.length > 0) {
+                map.fitBounds(bounds, { padding: [30, 30], maxZoom: 15 });
+            }
+        }
+
+        function renderList(stores) {
+            const container = document.getElementById('list-container');
+            container.innerHTML = '';
+            
+            stores.forEach(s => {
+                const div = document.createElement('div');
+                div.className = 'store-item';
+                
+                let badgeHtml = '';
+                let visitInfoHtml = '';
+                
+                if (s.status === 'unvisited') {
+                    badgeHtml = '<span class="badge bg-red">未訪問</span>';
+                } else {
+                    if (s.status === 'visited_open') {
+                        badgeHtml = '<span class="badge bg-blue">訪問済(営)</span>';
+                    } else {
+                        badgeHtml = '<span class="badge bg-black">訪問済(閉)</span>';
+                    }
+                    
+                    // 訪問情報の表示
+                    visitInfoHtml = `
+                        <div class="visit-info">
+                            <b>訪問回数:</b> ${s.freq}回<br>
+                            <b>初回訪問:</b> ${s.first_visit}<br>
+                            <b>最終訪問:</b> ${s.last_visit}
+                        </div>
+                    `;
+                }
+                
+                const routeUrl = `https://www.google.com/maps/dir/?api=1&destination=${s.lat},${s.lng}`;
+                
+                div.innerHTML = `
+                    <div class="store-name">${badgeHtml} ${s.name}</div>
+                    <div class="store-address">${s.address_1} ${s.address_2} ${s.address_5}</div>
+                    ${visitInfoHtml}
+                    ${s.lat ? `<a href="${routeUrl}" target="_blank" style="display:inline-block; margin-top:8px; font-size:0.85rem; color:#00704A; font-weight:bold;">📍 経路案内を開く</a>` : ''}
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        function toggleView() {
+            isMapView = !isMapView;
+            const mapDiv = document.getElementById('map-container');
+            const listDiv = document.getElementById('list-container');
+            const btn = document.getElementById('view-toggle-btn');
+            
+            if (isMapView) {
+                mapDiv.style.display = 'block';
+                listDiv.style.display = 'none';
+                btn.textContent = '一覧を見る';
+                map.invalidateSize();
+            } else {
+                mapDiv.style.display = 'none';
+                listDiv.style.display = 'block';
+                btn.textContent = '地図を見る';
+            }
+        }
+
+        init();
+    </script>
+</body>
+</html>
