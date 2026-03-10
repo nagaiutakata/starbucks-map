@@ -53,6 +53,15 @@
             box-shadow: 0 4px 8px rgba(0,0,0,0.3); cursor: pointer; transition: 0.2s;
         }
         
+        /* 現在地ボタン */
+        #gps-btn {
+            position: absolute; bottom: 25px; left: 15px; z-index: 1000;
+            background: white; width: 44px; height: 44px; border-radius: 50%;
+            border: none; box-shadow: 0 2px 6px rgba(0,0,0,0.3); cursor: pointer;
+            display: flex; align-items: center; justify-content: center; font-size: 1.2rem;
+        }
+        #gps-btn:active { background: #f0f0f0; }
+
         /* インポートモーダル用 */
         #import-modal {
             display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -82,22 +91,23 @@
 
     <div id="filters">
         <div class="filter-row">
-            <select id="pref-select" onchange="onPrefChange()">
+            <select id="pref-select" onchange="applyFilters(true)">
                 <option value="">全国（都道府県）</option>
             </select>
-            <select id="city-select" onchange="applyFilters()">
+            <select id="city-select" onchange="applyFilters(true)">
                 <option value="">すべての市区町村</option>
             </select>
         </div>
         <div class="checkbox-group">
-            <label><input type="checkbox" id="chk-unvisited" checked onchange="applyFilters()"> 未訪問</label>
-            <label><input type="checkbox" id="chk-visited-open" checked onchange="applyFilters()"> 訪問済(営)</label>
-            <label><input type="checkbox" id="chk-visited-closed" checked onchange="applyFilters()"> 訪問済(閉)</label>
+            <label><input type="checkbox" id="chk-unvisited" checked onchange="applyFilters(false)"> 未訪問</label>
+            <label><input type="checkbox" id="chk-visited-open" checked onchange="applyFilters(false)"> 訪問済(営)</label>
+            <label><input type="checkbox" id="chk-visited-closed" checked onchange="applyFilters(false)"> 訪問済(閉)</label>
         </div>
     </div>
 
     <div id="main-content">
         <div id="map-container"></div>
+        <button id="gps-btn" onclick="locateUser()">📍</button>
         <div id="list-container"></div>
     </div>
 
@@ -106,8 +116,8 @@
     <div id="import-modal">
         <div class="modal-content">
             <h2>スタンプデータの登録</h2>
-            <p style="font-size: 0.85rem; color: #555;">my_starbucks_stamps_all.json のテキスト内容をコピーして貼り付けてください。<br>※データはご自身のブラウザ内部（LocalStorage）にのみ安全に保存されます。</p>
-            <textarea id="json-input" placeholder="[ { &quot;store_id&quot;: &quot;1234&quot;, ... } ]"></textarea>
+            <p style="font-size: 0.85rem; color: #555;">my_starbucks_stamps_all.json のテキスト内容をコピーして貼り付けてください。<br>※データはブラウザ内部にのみ安全に保存されます。</p>
+            <textarea id="json-input" placeholder="[ { "store_id": "1234", ... } ]"></textarea>
             <div class="modal-actions">
                 <button class="btn-cancel" onclick="closeImportModal()">キャンセル</button>
                 <button class="btn-save" onclick="saveStampsData()">保存して反映</button>
@@ -127,6 +137,7 @@
         };
 
         let mergedStores = [];
+        let currentFilteredStores = []; // 現在のフィルタ条件に合致する店舗
         let map, markersLayer;
         let isMapView = true;
         const STORAGE_KEY = 'my_starbucks_stamps_data';
@@ -134,28 +145,24 @@
         async function init() {
             initMap();
             try {
-                // 全店舗データのみFetchで取得
                 const fullRes = await fetch('./starbucks_full_data.json');
                 const allStoresData = await fullRes.json();
                 
-                // スタンプデータはLocalStorageから取得
                 const savedStampsStr = localStorage.getItem(STORAGE_KEY);
                 let stampsData = [];
-                
                 if (savedStampsStr) {
-                    try {
-                        stampsData = JSON.parse(savedStampsStr);
-                    } catch(e) {
-                        console.error("ローカルデータのパースエラー", e);
-                    }
+                    try { stampsData = JSON.parse(savedStampsStr); } 
+                    catch(e) { console.error("パースエラー", e); }
                 } else {
-                    // データが未登録の場合はモーダルを開く
                     openImportModal();
                 }
                 
                 processData(allStoresData, stampsData);
                 initFilters();
-                applyFilters();
+                
+                // 初回読み込み時は現在地を取得し、取得後にフィルタを適用してピンを描画
+                locateUser(true);
+                
             } catch (error) {
                 console.error("データの読み込みに失敗しました", error);
                 document.getElementById('stats').innerText = "データ読込エラー。";
@@ -163,12 +170,9 @@
         }
 
         function processData(allStoresData, stampsData) {
-            mergedStores = []; // 初期化
+            mergedStores = []; 
             const stampsMap = {};
-            stampsData.forEach(stamp => {
-                stampsMap[stamp.store_id] = stamp;
-            });
-
+            stampsData.forEach(stamp => stampsMap[stamp.store_id] = stamp);
             const fullDataMap = {};
 
             allStoresData.forEach(item => {
@@ -187,13 +191,9 @@
                 }
 
                 mergedStores.push({
-                    store_id: store_id,
-                    name: fields.name,
-                    address_1: fields.address_1,
-                    address_2: fields.address_2,
-                    address_5: fields.address_5,
-                    lat: lat,
-                    lng: lng,
+                    store_id: store_id, name: fields.name,
+                    address_1: fields.address_1, address_2: fields.address_2, address_5: fields.address_5,
+                    lat: lat, lng: lng,
                     status: isVisited ? 'visited_open' : 'unvisited',
                     freq: isVisited ? stamp.frequency_of_visits : null,
                     first_visit: isVisited ? stamp.first_visit_date : null,
@@ -205,48 +205,36 @@
                 if (!fullDataMap[stamp.store_id]) {
                     const prefName = prefMap[stamp.pref_code] || '不明';
                     mergedStores.push({
-                        store_id: stamp.store_id,
-                        name: stamp.name,
-                        address_1: prefName,
-                        address_2: '不明',
-                        address_5: '※所在地詳細不明（閉店）',
-                        lat: null, 
-                        lng: null,
+                        store_id: stamp.store_id, name: stamp.name,
+                        address_1: prefName, address_2: '不明', address_5: '※所在地詳細不明（閉店）',
+                        lat: null, lng: null,
                         status: stamp.is_exist === 1 ? 'visited_open' : 'visited_closed',
-                        freq: stamp.frequency_of_visits,
-                        first_visit: stamp.first_visit_date,
-                        last_visit: stamp.last_visit_date
+                        freq: stamp.frequency_of_visits, first_visit: stamp.first_visit_date, last_visit: stamp.last_visit_date
                     });
                 }
             });
         }
 
-        // モーダル操作系
         function openImportModal() {
             document.getElementById('import-modal').style.display = 'flex';
             const savedStr = localStorage.getItem(STORAGE_KEY);
             if(savedStr) document.getElementById('json-input').value = savedStr;
         }
 
-        function closeImportModal() {
-            document.getElementById('import-modal').style.display = 'none';
-        }
+        function closeImportModal() { document.getElementById('import-modal').style.display = 'none'; }
 
         function saveStampsData() {
             const jsonText = document.getElementById('json-input').value;
-            if(!jsonText.trim()) {
-                alert("データが入力されていません。");
-                return;
-            }
+            if(!jsonText.trim()) return alert("データが入力されていません。");
             try {
                 const parsed = JSON.parse(jsonText);
-                if(!Array.isArray(parsed)) throw new Error("配列形式ではありません");
+                if(!Array.isArray(parsed)) throw new Error("配列ではありません");
                 localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
                 closeImportModal();
                 alert("データを保存しました。画面を再読み込みします。");
                 location.reload();
             } catch(e) {
-                alert("JSONの形式が正しくありません。コピーしたテキストを確認してください。");
+                alert("JSONの形式が正しくありません。");
             }
         }
 
@@ -255,32 +243,31 @@
             const prefSelect = document.getElementById('pref-select');
             prefs.forEach(p => {
                 const opt = document.createElement('option');
-                opt.value = p;
-                opt.textContent = p;
+                opt.value = p; opt.textContent = p;
                 prefSelect.appendChild(opt);
             });
         }
 
-        function onPrefChange() {
-            const pref = document.getElementById('pref-select').value;
+        function updateCityOptions(pref) {
             const citySelect = document.getElementById('city-select');
             citySelect.innerHTML = '<option value="">すべての市区町村</option>';
-            
             if (pref) {
                 const cities = [...new Set(mergedStores.filter(s => s.address_1 === pref).map(s => s.address_2))].filter(c => c && c !== '不明').sort();
                 cities.forEach(c => {
                     const opt = document.createElement('option');
-                    opt.value = c;
-                    opt.textContent = c;
+                    opt.value = c; opt.textContent = c;
                     citySelect.appendChild(opt);
                 });
             }
-            applyFilters();
         }
 
-        function applyFilters() {
+        // フィルタ処理 (shouldFitBoundsがtrueの時はマップの視点を移動させる)
+        function applyFilters(shouldFitBounds = false) {
             const pref = document.getElementById('pref-select').value;
             const city = document.getElementById('city-select').value;
+            
+            // プルダウン変更時のみ市町村リストを更新（イベント呼び出し元による）
+            if(shouldFitBounds && event.target.id === 'pref-select') updateCityOptions(pref);
             
             const showUnvisited = document.getElementById('chk-unvisited').checked;
             const showVisitedOpen = document.getElementById('chk-visited-open').checked;
@@ -290,15 +277,21 @@
             if (pref) areaFiltered = areaFiltered.filter(s => s.address_1 === pref);
             if (city) areaFiltered = areaFiltered.filter(s => s.address_2 === city);
 
-            let finalFiltered = areaFiltered.filter(s => {
+            currentFilteredStores = areaFiltered.filter(s => {
                 if (s.status === 'unvisited' && showUnvisited) return true;
                 if (s.status === 'visited_open' && showVisitedOpen) return true;
                 if (s.status === 'visited_closed' && showVisitedClosed) return true;
                 return false;
             });
 
-            renderMap(finalFiltered);
-            renderList(finalFiltered);
+            // プルダウンでの絞り込み時のみ、そのエリア全体が収まるようにズーム調整
+            if (shouldFitBounds && currentFilteredStores.length > 0) {
+                const bounds = currentFilteredStores.filter(s => s.lat && s.lng).map(s => [s.lat, s.lng]);
+                if (bounds.length > 0) map.fitBounds(bounds, { padding: [30, 30], maxZoom: 13 });
+            }
+
+            renderVisibleMarkers();
+            renderList(currentFilteredStores);
             updateStats(areaFiltered, pref, city);
         }
 
@@ -310,17 +303,40 @@
             const xx = areaStores.filter(s => s.status === 'visited_open').length;
             const yy = areaStores.filter(s => s.status === 'visited_open' || s.status === 'unvisited').length;
             const zz = areaStores.filter(s => s.status === 'visited_closed').length;
-
             document.getElementById('stats').innerText = `【${title}】達成率: ${xx}/${yy} (閉店 ${zz})`;
         }
 
         function initMap() {
-            // 初期表示位置を中心部に設定
-            map = L.map('map-container').setView([34.6937, 135.5023], 10);
+            // 初期表示は大阪周辺に設定
+            map = L.map('map-container').setView([34.7024, 135.4959], 13);
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '© OpenStreetMap contributors'
+                attribution: '© OpenStreetMap'
             }).addTo(map);
             markersLayer = L.layerGroup().addTo(map);
+
+            // 地図の移動・ズームが完了したタイミングでピンを再描画
+            map.on('moveend', renderVisibleMarkers);
+        }
+
+        // 現在地取得機能
+        function locateUser(isInitialLoad = false) {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    position => {
+                        const lat = position.coords.latitude;
+                        const lng = position.coords.longitude;
+                        map.setView([lat, lng], 14); // ズームして移動
+                        if (isInitialLoad) applyFilters(false);
+                    },
+                    error => {
+                        console.warn("Geolocation denied or failed.", error);
+                        if (isInitialLoad) applyFilters(false); // 失敗時は初期座標のまま描画
+                    },
+                    { enableHighAccuracy: true, timeout: 5000 }
+                );
+            } else {
+                if (isInitialLoad) applyFilters(false);
+            }
         }
 
         function getIcon(status) {
@@ -329,37 +345,35 @@
             const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 36" width="24" height="36"><path fill="${color}" d="M12 0C5.37 0 0 5.37 0 12c0 9 12 24 12 24s12-15 12-24c0-6.63-5.37-12-12-12zm0 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10z"/></svg>`;
             return L.icon({
                 iconUrl: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
-                iconSize: [24, 36],
-                iconAnchor: [12, 36],
-                popupAnchor: [0, -36]
+                iconSize: [24, 36], iconAnchor: [12, 36], popupAnchor: [0, -36]
             });
         }
 
-        function renderMap(stores) {
-            markersLayer.clearLayers();
-            const bounds = [];
+        // パフォーマンスチューニング：画面内のピンのみを計算して描画
+        function renderVisibleMarkers() {
+            if (!map || currentFilteredStores.length === 0) return;
             
-            stores.forEach(s => {
+            markersLayer.clearLayers();
+            const bounds = map.getBounds(); // 現在の地図の表示領域を取得
+            
+            currentFilteredStores.forEach(s => {
                 if (s.lat && s.lng) {
-                    const marker = L.marker([s.lat, s.lng], { icon: getIcon(s.status) });
-                    const statusText = s.status === 'unvisited' ? '未訪問' : s.status === 'visited_open' ? '訪問済' : '閉店';
-                    
-                    // URL生成方法を修正 (Google Maps Directions URL)
-                    const routeUrl = `https://www.google.com/maps/dir/?api=1&destination=${s.lat},${s.lng}`;
-                    
-                    marker.bindPopup(`
-                        <b style="font-size:1.1rem;">${s.name}</b><br>
-                        状態: ${statusText}<br>
-                        <a href="${routeUrl}" target="_blank" style="display:inline-block; margin-top:5px; color:#00704A; font-weight:bold;">Googleマップで経路案内</a>
-                    `);
-                    markersLayer.addLayer(marker);
-                    bounds.push([s.lat, s.lng]);
+                    const latLng = L.latLng(s.lat, s.lng);
+                    // 領域内に含まれる店舗のみマーカーを生成
+                    if (bounds.contains(latLng)) {
+                        const marker = L.marker(latLng, { icon: getIcon(s.status) });
+                        const statusText = s.status === 'unvisited' ? '未訪問' : s.status === 'visited_open' ? '訪問済' : '閉店';
+                        const routeUrl = `https://www.google.com/maps/dir/?api=1&destination=$${s.lat},${s.lng}`;
+                        
+                        marker.bindPopup(`
+                            <b style="font-size:1.1rem;">${s.name}</b><br>
+                            状態: ${statusText}<br>
+                            <a href="${routeUrl}" target="_blank" style="display:inline-block; margin-top:5px; color:#00704A; font-weight:bold;">Googleマップで経路案内</a>
+                        `);
+                        markersLayer.addLayer(marker);
+                    }
                 }
             });
-            
-            if (bounds.length > 0) {
-                map.fitBounds(bounds, { padding: [30, 30], maxZoom: 15 });
-            }
         }
 
         function renderList(stores) {
@@ -376,13 +390,7 @@
                 if (s.status === 'unvisited') {
                     badgeHtml = '<span class="badge bg-red">未訪問</span>';
                 } else {
-                    if (s.status === 'visited_open') {
-                        badgeHtml = '<span class="badge bg-blue">訪問済(営)</span>';
-                    } else {
-                        badgeHtml = '<span class="badge bg-black">訪問済(閉)</span>';
-                    }
-                    
-                    // 訪問情報の表示
+                    badgeHtml = s.status === 'visited_open' ? '<span class="badge bg-blue">訪問済(営)</span>' : '<span class="badge bg-black">訪問済(閉)</span>';
                     visitInfoHtml = `
                         <div class="visit-info">
                             <b>訪問回数:</b> ${s.freq}回<br>
@@ -392,8 +400,7 @@
                     `;
                 }
                 
-                const routeUrl = `https://www.google.com/maps/dir/?api=1&destination=${s.lat},${s.lng}`;
-                
+                const routeUrl = `https://www.google.com/maps/dir/?api=1&destination=$${s.lat},${s.lng}`;
                 div.innerHTML = `
                     <div class="store-name">${badgeHtml} ${s.name}</div>
                     <div class="store-address">${s.address_1} ${s.address_2} ${s.address_5}</div>
@@ -415,6 +422,7 @@
                 listDiv.style.display = 'none';
                 btn.textContent = '一覧を見る';
                 map.invalidateSize();
+                renderVisibleMarkers(); // 念のため再描画
             } else {
                 mapDiv.style.display = 'none';
                 listDiv.style.display = 'block';
