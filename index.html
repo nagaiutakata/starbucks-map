@@ -2,25 +2,28 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Starbucks Maps & Stamps</title>
     
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.Default.css" />
     
     <style>
+        /* iPhone Safari対策: 100vh ではなく 100dvh を使用 */
         body {
             margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            display: flex; flex-direction: column; height: 100vh; background: #f4f4f4;
+            display: flex; flex-direction: column; height: 100dvh; background: #f4f4f4; overflow: hidden;
         }
         #header {
-            background: #00704A; color: white; padding: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); z-index: 10;
-            display: flex; justify-content: space-between; align-items: center;
+            background: #00704A; color: white; padding: env(safe-area-inset-top) 15px 15px 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); z-index: 10;
+            display: flex; justify-content: space-between; align-items: flex-end;
         }
         #header-left h1 { margin: 0 0 5px 0; font-size: 1.2rem; }
         #stats { font-size: 1rem; font-weight: bold; }
         #btn-import-open {
             background: white; color: #00704A; border: none; padding: 6px 12px; border-radius: 20px;
-            font-size: 0.85rem; font-weight: bold; cursor: pointer; box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            font-size: 0.85rem; font-weight: bold; cursor: pointer; box-shadow: 0 2px 4px rgba(0,0,0,0.2); margin-bottom: 2px;
         }
         
         #filters {
@@ -34,7 +37,10 @@
 
         #main-content { flex: 1; position: relative; overflow: hidden; }
         #map-container { width: 100%; height: 100%; }
-        #list-container { width: 100%; height: 100%; overflow-y: auto; background: #fff; display: none; padding-bottom: 80px; }
+        #list-container { 
+            width: 100%; height: 100%; overflow-y: auto; background: #fff; display: none; 
+            padding-bottom: calc(80px + env(safe-area-inset-bottom)); 
+        }
         
         .store-item { padding: 15px; border-bottom: 1px solid #eee; }
         .store-name { font-weight: bold; margin-bottom: 5px; font-size: 1.1rem; }
@@ -46,25 +52,24 @@
         .bg-blue { background: #3498db; } /* 訪問済・営業中 */
         .bg-black { background: #333333; } /* 訪問済・閉店 */
         
+        /* ボタン類の配置最適化 */
         #view-toggle-btn {
-            position: fixed; bottom: 25px; right: 25px; z-index: 1000;
+            position: absolute; bottom: calc(25px + env(safe-area-inset-bottom)); right: 15px; z-index: 1000;
             padding: 12px 24px; background: #00704A; color: white;
             border: none; border-radius: 30px; font-size: 1rem; font-weight: bold;
             box-shadow: 0 4px 8px rgba(0,0,0,0.3); cursor: pointer; transition: 0.2s;
         }
         
-        /* 現在地ボタン */
         #gps-btn {
-            position: absolute; bottom: 25px; left: 15px; z-index: 1000;
+            position: absolute; bottom: calc(25px + env(safe-area-inset-bottom)); left: 15px; z-index: 1000;
             background: white; width: 44px; height: 44px; border-radius: 50%;
-            border: none; box-shadow: 0 2px 6px rgba(0,0,0,0.3); cursor: pointer;
+            border: none; box-shadow: 0 4px 8px rgba(0,0,0,0.3); cursor: pointer;
             display: flex; align-items: center; justify-content: center; font-size: 1.2rem;
         }
-        #gps-btn:active { background: #f0f0f0; }
+        #gps-btn:active, #view-toggle-btn:active { transform: scale(0.95); }
 
-        /* インポートモーダル用 */
         #import-modal {
-            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100dvh;
             background: rgba(0,0,0,0.6); z-index: 2000; align-items: center; justify-content: center;
         }
         .modal-content {
@@ -77,6 +82,15 @@
         .modal-actions { text-align: right; margin-top: 10px; }
         .btn-cancel { background: #ccc; border: none; padding: 8px 16px; border-radius: 4px; margin-right: 10px; cursor: pointer; font-weight: bold; }
         .btn-save { background: #00704A; color: white; border: none; padding: 8px 16px; border-radius: 4px; font-weight: bold; cursor: pointer; }
+
+        /* MarkerCluster カスタマイズ色 (緑基調) */
+        .marker-cluster-small, .marker-cluster-medium, .marker-cluster-large {
+            background-color: rgba(0, 112, 74, 0.6);
+        }
+        .marker-cluster-small div, .marker-cluster-medium div, .marker-cluster-large div {
+            background-color: rgba(0, 112, 74, 0.9);
+            color: white; font-weight: bold;
+        }
     </style>
 </head>
 <body>
@@ -107,17 +121,16 @@
 
     <div id="main-content">
         <div id="map-container"></div>
-        <button id="gps-btn" onclick="locateUser()">📍</button>
+        <button id="gps-btn" onclick="locateUser(false)">📍</button>
         <div id="list-container"></div>
+        <button id="view-toggle-btn" onclick="toggleView()">一覧を見る</button>
     </div>
-
-    <button id="view-toggle-btn" onclick="toggleView()">一覧を見る</button>
 
     <div id="import-modal">
         <div class="modal-content">
             <h2>スタンプデータの登録</h2>
-            <p style="font-size: 0.85rem; color: #555;">my_starbucks_stamps_all.json のテキスト内容をコピーして貼り付けてください。<br>※データはブラウザ内部にのみ安全に保存されます。</p>
-            <textarea id="json-input" placeholder="[ { "store_id": "1234", ... } ]"></textarea>
+            <p style="font-size: 0.85rem; color: #555;">my_starbucks_stamps_all.json の内容を貼り付けてください。</p>
+            <textarea id="json-input" placeholder="[ { &quot;store_id&quot;: &quot;1234&quot;, ... } ]"></textarea>
             <div class="modal-actions">
                 <button class="btn-cancel" onclick="closeImportModal()">キャンセル</button>
                 <button class="btn-save" onclick="saveStampsData()">保存して反映</button>
@@ -126,6 +139,7 @@
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.markercluster@1.4.1/dist/leaflet.markercluster.js"></script>
     
     <script>
         const prefMap = {
@@ -137,8 +151,8 @@
         };
 
         let mergedStores = [];
-        let currentFilteredStores = []; // 現在のフィルタ条件に合致する店舗
-        let map, markersLayer;
+        let currentFilteredStores = [];
+        let map, markersClusterGroup;
         let isMapView = true;
         const STORAGE_KEY = 'my_starbucks_stamps_data';
 
@@ -159,9 +173,7 @@
                 
                 processData(allStoresData, stampsData);
                 initFilters();
-                
-                // 初回読み込み時は現在地を取得し、取得後にフィルタを適用してピンを描画
-                locateUser(true);
+                locateUser(true); // 初回読み込み時に現在地へ
                 
             } catch (error) {
                 console.error("データの読み込みに失敗しました", error);
@@ -261,13 +273,11 @@
             }
         }
 
-        // フィルタ処理 (shouldFitBoundsがtrueの時はマップの視点を移動させる)
         function applyFilters(shouldFitBounds = false) {
             const pref = document.getElementById('pref-select').value;
             const city = document.getElementById('city-select').value;
             
-            // プルダウン変更時のみ市町村リストを更新（イベント呼び出し元による）
-            if(shouldFitBounds && event.target.id === 'pref-select') updateCityOptions(pref);
+            if(shouldFitBounds && event && event.target.id === 'pref-select') updateCityOptions(pref);
             
             const showUnvisited = document.getElementById('chk-unvisited').checked;
             const showVisitedOpen = document.getElementById('chk-visited-open').checked;
@@ -284,13 +294,12 @@
                 return false;
             });
 
-            // プルダウンでの絞り込み時のみ、そのエリア全体が収まるようにズーム調整
             if (shouldFitBounds && currentFilteredStores.length > 0) {
                 const bounds = currentFilteredStores.filter(s => s.lat && s.lng).map(s => [s.lat, s.lng]);
                 if (bounds.length > 0) map.fitBounds(bounds, { padding: [30, 30], maxZoom: 13 });
             }
 
-            renderVisibleMarkers();
+            renderMarkers(); // MarkerClusterを使って一括描画
             renderList(currentFilteredStores);
             updateStats(areaFiltered, pref, city);
         }
@@ -307,30 +316,31 @@
         }
 
         function initMap() {
-            // 初期表示は大阪周辺に設定
             map = L.map('map-container').setView([34.7024, 135.4959], 13);
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 attribution: '© OpenStreetMap'
             }).addTo(map);
-            markersLayer = L.layerGroup().addTo(map);
-
-            // 地図の移動・ズームが完了したタイミングでピンを再描画
-            map.on('moveend', renderVisibleMarkers);
+            
+            // MarkerClusterの初期化
+            markersClusterGroup = L.markerClusterGroup({
+                maxClusterRadius: 40,
+                disableClusteringAtZoom: 15 // ズームレベル15以上でクラスターを解除して個別のピンを表示
+            });
+            map.addLayer(markersClusterGroup);
         }
 
-        // 現在地取得機能
         function locateUser(isInitialLoad = false) {
             if (navigator.geolocation) {
                 navigator.geolocation.getCurrentPosition(
                     position => {
                         const lat = position.coords.latitude;
                         const lng = position.coords.longitude;
-                        map.setView([lat, lng], 14); // ズームして移動
+                        map.setView([lat, lng], 14);
                         if (isInitialLoad) applyFilters(false);
                     },
                     error => {
                         console.warn("Geolocation denied or failed.", error);
-                        if (isInitialLoad) applyFilters(false); // 失敗時は初期座標のまま描画
+                        if (isInitialLoad) applyFilters(false);
                     },
                     { enableHighAccuracy: true, timeout: 5000 }
                 );
@@ -349,31 +359,32 @@
             });
         }
 
-        // パフォーマンスチューニング：画面内のピンのみを計算して描画
-        function renderVisibleMarkers() {
+        // MarkerClusterを使用したマーカーの一括描画
+        function renderMarkers() {
             if (!map || currentFilteredStores.length === 0) return;
             
-            markersLayer.clearLayers();
-            const bounds = map.getBounds(); // 現在の地図の表示領域を取得
+            markersClusterGroup.clearLayers();
+            const markersToAdd = [];
             
             currentFilteredStores.forEach(s => {
                 if (s.lat && s.lng) {
-                    const latLng = L.latLng(s.lat, s.lng);
-                    // 領域内に含まれる店舗のみマーカーを生成
-                    if (bounds.contains(latLng)) {
-                        const marker = L.marker(latLng, { icon: getIcon(s.status) });
-                        const statusText = s.status === 'unvisited' ? '未訪問' : s.status === 'visited_open' ? '訪問済' : '閉店';
-                        const routeUrl = `https://www.google.com/maps/dir/?api=1&destination=$${s.lat},${s.lng}`;
-                        
-                        marker.bindPopup(`
-                            <b style="font-size:1.1rem;">${s.name}</b><br>
-                            状態: ${statusText}<br>
-                            <a href="${routeUrl}" target="_blank" style="display:inline-block; margin-top:5px; color:#00704A; font-weight:bold;">Googleマップで経路案内</a>
-                        `);
-                        markersLayer.addLayer(marker);
-                    }
+                    const marker = L.marker([s.lat, s.lng], { icon: getIcon(s.status) });
+                    const statusText = s.status === 'unvisited' ? '未訪問' : s.status === 'visited_open' ? '訪問済' : '閉店';
+                    
+                    // バグ修正: Googleマップ経路案内の正しいURL
+                    const routeUrl = 'https://www.google.com/maps/dir/?api=1&destination=' + s.lat + ',' + s.lng;
+                    
+                    marker.bindPopup(`
+                        <b style="font-size:1.1rem;">${s.name}</b><br>
+                        状態: ${statusText}<br>
+                        <a href="${routeUrl}" target="_blank" style="display:inline-block; margin-top:5px; color:#00704A; font-weight:bold;">Googleマップで経路案内</a>
+                    `);
+                    markersToAdd.push(marker);
                 }
             });
+            
+            // 全マーカーを一度にクラスターグループに追加（圧倒的に高速）
+            markersClusterGroup.addLayers(markersToAdd);
         }
 
         function renderList(stores) {
@@ -400,7 +411,7 @@
                     `;
                 }
                 
-                const routeUrl = `https://www.google.com/maps/dir/?api=1&destination=$${s.lat},${s.lng}`;
+                const routeUrl = 'https://www.google.com/maps/dir/?api=1&destination=' + s.lat + ',' + s.lng;
                 div.innerHTML = `
                     <div class="store-name">${badgeHtml} ${s.name}</div>
                     <div class="store-address">${s.address_1} ${s.address_2} ${s.address_5}</div>
@@ -422,15 +433,12 @@
                 listDiv.style.display = 'none';
                 btn.textContent = '一覧を見る';
                 map.invalidateSize();
-                renderVisibleMarkers(); // 念のため再描画
             } else {
                 mapDiv.style.display = 'none';
                 listDiv.style.display = 'block';
                 btn.textContent = '地図を見る';
             }
         }
-
-        init();
     </script>
 </body>
 </html>
