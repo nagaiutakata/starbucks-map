@@ -11,7 +11,6 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
     
     <style>
-        /* iOS Safariのツールバー対策: 100vh ではなく 100dvh を使用 */
         body {
             margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             display: flex; flex-direction: column; height: 100dvh; background: #f4f4f4;
@@ -41,7 +40,7 @@
         #map-container { width: 100%; height: 100%; }
         #list-container { 
             width: 100%; height: 100%; overflow-y: auto; background: #fff; display: none; 
-            padding-bottom: calc(env(safe-area-inset-bottom, 20px) + 80px); /* スクロール最下部の余白 */
+            padding-bottom: calc(env(safe-area-inset-bottom, 20px) + 80px);
         }
         
         .store-item { padding: 15px; border-bottom: 1px solid #eee; }
@@ -54,7 +53,6 @@
         .bg-blue { background: #3498db; } 
         .bg-black { background: #333333; } 
         
-        /* ボタン位置を safe-area-inset-bottom で押し上げる */
         #view-toggle-btn {
             position: absolute; 
             bottom: calc(env(safe-area-inset-bottom, 20px) + 20px); 
@@ -95,7 +93,7 @@
     <div id="header">
         <div id="header-left">
             <h1>マイストアスタンプ マップ</h1>
-            <div id="stats">【全国】達成率: 読込中...</div>
+            <div id="stats">達成率: 読込中...</div>
         </div>
         <button id="btn-import-open" onclick="openImportModal()">データ読込</button>
     </div>
@@ -146,6 +144,7 @@
             31:"鳥取県",32:"島根県",33:"岡山県",34:"広島県",35:"山口県",36:"徳島県",37:"香川県",38:"愛媛県",39:"高知県",40:"福岡県",
             41:"佐賀県",42:"長崎県",43:"熊本県",44:"大分県",45:"宮崎県",46:"鹿児島県",47:"沖縄県"
         };
+        const kansaiPrefs = ["滋賀県", "京都府", "大阪府", "兵庫県", "奈良県", "和歌山県"];
 
         let mergedStores = [];
         let map, markersLayer;
@@ -170,7 +169,6 @@
                 processData(allStoresData, stampsData);
                 initFilters();
                 
-                // 初回は現在地を取得して描画
                 locateUser(true);
                 
             } catch (error) {
@@ -251,17 +249,27 @@
         function initFilters() {
             const prefs = [...new Set(mergedStores.map(s => s.address_1))].filter(Boolean).sort();
             const prefSelect = document.getElementById('pref-select');
+            
+            // 関西の選択肢を追加
+            const kansaiOpt = document.createElement('option');
+            kansaiOpt.value = '関西';
+            kansaiOpt.textContent = '関西エリア（2府4県）';
+            prefSelect.appendChild(kansaiOpt);
+
             prefs.forEach(p => {
                 const opt = document.createElement('option');
                 opt.value = p; opt.textContent = p;
                 prefSelect.appendChild(opt);
             });
+            
+            // デフォルトを関西に設定
+            prefSelect.value = '関西';
         }
 
         function updateCityOptions(pref) {
             const citySelect = document.getElementById('city-select');
             citySelect.innerHTML = '<option value="">すべての市区町村</option>';
-            if (pref) {
+            if (pref && pref !== '関西') {
                 const cities = [...new Set(mergedStores.filter(s => s.address_1 === pref).map(s => s.address_2))].filter(c => c && c !== '不明').sort();
                 cities.forEach(c => {
                     const opt = document.createElement('option');
@@ -282,7 +290,11 @@
             const showVisitedClosed = document.getElementById('chk-visited-closed').checked;
             
             let areaFiltered = mergedStores;
-            if (pref) areaFiltered = areaFiltered.filter(s => s.address_1 === pref);
+            if (pref === '関西') {
+                areaFiltered = areaFiltered.filter(s => kansaiPrefs.includes(s.address_1));
+            } else if (pref) {
+                areaFiltered = areaFiltered.filter(s => s.address_1 === pref);
+            }
             if (city) areaFiltered = areaFiltered.filter(s => s.address_2 === city);
 
             const finalFiltered = areaFiltered.filter(s => {
@@ -297,7 +309,6 @@
                 if (bounds.length > 0) map.fitBounds(bounds, { padding: [30, 30], maxZoom: 13 });
             }
 
-            // MarkerClusterに一括でデータを渡す
             renderMap(finalFiltered);
             renderList(finalFiltered);
             updateStats(areaFiltered, pref, city);
@@ -306,6 +317,7 @@
         function updateStats(areaStores, pref, city) {
             let title = "全国";
             if (city) title = city;
+            else if (pref === '関西') title = "関西エリア";
             else if (pref) title = pref;
 
             const xx = areaStores.filter(s => s.status === 'visited_open').length;
@@ -315,17 +327,15 @@
         }
 
         function initMap() {
-            // 大阪駅周辺をフォールバックのデフォルト位置として設定
             map = L.map('map-container', { zoomControl: false }).setView([34.7024, 135.4959], 13);
             L.control.zoom({ position: 'topright' }).addTo(map);
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 attribution: '© OpenStreetMap'
             }).addTo(map);
             
-            // MarkerClusterグループの初期化
             markersLayer = L.markerClusterGroup({
                 maxClusterRadius: 40, 
-                disableClusteringAtZoom: 14, // ズーム時は展開する
+                disableClusteringAtZoom: 14,
                 spiderfyOnMaxZoom: true
             });
             map.addLayer(markersLayer);
@@ -342,12 +352,12 @@
                     },
                     error => {
                         console.warn("Geolocation failed.", error);
-                        if (isInitialLoad) applyFilters(false);
+                        if (isInitialLoad) applyFilters(true); // 位置情報が取れない場合はデフォルトのエリア（関西）に合わせる
                     },
                     { enableHighAccuracy: true, timeout: 5000 }
                 );
             } else {
-                if (isInitialLoad) applyFilters(false);
+                if (isInitialLoad) applyFilters(true);
             }
         }
 
@@ -371,7 +381,6 @@
                     const marker = L.marker([s.lat, s.lng], { icon: getIcon(s.status) });
                     const statusText = s.status === 'unvisited' ? '未訪問' : s.status === 'visited_open' ? '訪問済' : '閉店';
                     
-                    // 【修正完了】正しいGoogle Maps経路案内URLの生成
                     const routeUrl = `https://www.google.com/maps/dir/?api=1&destination=${s.lat},${s.lng}`;
                     
                     marker.bindPopup(`
@@ -382,7 +391,6 @@
                     markers.push(marker);
                 }
             });
-            // MarkerClusterに配列を一括登録（超高速）
             markersLayer.addLayers(markers);
         }
 
@@ -426,15 +434,18 @@
             const mapDiv = document.getElementById('map-container');
             const listDiv = document.getElementById('list-container');
             const btn = document.getElementById('view-toggle-btn');
+            const gpsBtn = document.getElementById('gps-btn');
             
             if (isMapView) {
                 mapDiv.style.display = 'block';
                 listDiv.style.display = 'none';
+                gpsBtn.style.display = 'flex'; // マップ表示時はGPSボタンを表示
                 btn.textContent = '一覧を見る';
                 map.invalidateSize();
             } else {
                 mapDiv.style.display = 'none';
                 listDiv.style.display = 'block';
+                gpsBtn.style.display = 'none'; // 一覧表示時はGPSボタンを隠す
                 btn.textContent = '地図を見る';
             }
         }
