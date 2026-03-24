@@ -214,7 +214,7 @@
                     const prefName = prefMap[stamp.pref_code] || '不明';
                     mergedStores.push({
                         store_id: stamp.store_id, name: stamp.name,
-                        address_1: prefName, address_2: '不明', address_5: '※所在地詳細不明（閉店）',
+                        address_1: prefName, address_2: '不明', address_5: prefName + ' ※所在地詳細不明（閉店）',
                         lat: null, lng: null,
                         status: stamp.is_exist === 1 ? 'visited_open' : 'visited_closed',
                         freq: stamp.frequency_of_visits, first_visit: stamp.first_visit_date, last_visit: stamp.last_visit_date
@@ -250,7 +250,6 @@
             const prefs = [...new Set(mergedStores.map(s => s.address_1))].filter(Boolean).sort();
             const prefSelect = document.getElementById('pref-select');
             
-            // 関西の選択肢を追加
             const kansaiOpt = document.createElement('option');
             kansaiOpt.value = '関西';
             kansaiOpt.textContent = '関西エリア（2府4県）';
@@ -262,7 +261,6 @@
                 prefSelect.appendChild(opt);
             });
             
-            // デフォルトを関西に設定
             prefSelect.value = '関西';
         }
 
@@ -352,7 +350,7 @@
                     },
                     error => {
                         console.warn("Geolocation failed.", error);
-                        if (isInitialLoad) applyFilters(true); // 位置情報が取れない場合はデフォルトのエリア（関西）に合わせる
+                        if (isInitialLoad) applyFilters(true);
                     },
                     { enableHighAccuracy: true, timeout: 5000 }
                 );
@@ -421,7 +419,7 @@
                 const routeUrl = `https://www.google.com/maps/dir/?api=1&destination=${s.lat},${s.lng}`;
                 div.innerHTML = `
                     <div class="store-name">${badgeHtml} ${s.name}</div>
-                    <div class="store-address">${s.address_1} ${s.address_2} ${s.address_5}</div>
+                    <div class="store-address">${s.address_5}</div>
                     ${visitInfoHtml}
                     ${s.lat ? `<a href="${routeUrl}" target="_blank" style="display:inline-block; margin-top:8px; font-size:0.85rem; color:#00704A; font-weight:bold;">📍 経路案内を開く</a>` : ''}
                 `;
@@ -439,13 +437,13 @@
             if (isMapView) {
                 mapDiv.style.display = 'block';
                 listDiv.style.display = 'none';
-                gpsBtn.style.display = 'flex'; // マップ表示時はGPSボタンを表示
+                gpsBtn.style.display = 'flex'; 
                 btn.textContent = '一覧を見る';
                 map.invalidateSize();
             } else {
                 mapDiv.style.display = 'none';
                 listDiv.style.display = 'block';
-                gpsBtn.style.display = 'none'; // 一覧表示時はGPSボタンを隠す
+                gpsBtn.style.display = 'none'; 
                 btn.textContent = '地図を見る';
             }
         }
